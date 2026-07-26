@@ -1,0 +1,15 @@
+{
+  "name": "eeye-chat-logger",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "StarBreak lobby chat logger (web client)",
+  "scripts": {
+    "decode": "node src/decode-file.js",
+    "logger": "node src/logger.js",
+    "test:decode": "node src/decode-file.js ../phase1-ws-capture/captures/starbreak-ws-1784880099832.jsonl"
+  },
+  "dependencies": {
+    "playwright": "^1.54.1"
+  }
+}
