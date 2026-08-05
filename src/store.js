@@ -7,6 +7,13 @@ import pg from "pg";
 
 const { Pool } = pg;
 
+/** Make chat safe for one-line logs and UI while preserving raw separately. */
+export function normalizeChatMessage(message) {
+  return String(message ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim();
+}
+
 export function createJsonlStore(filePath) {
   const abs = path.resolve(filePath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -16,15 +23,17 @@ export function createJsonlStore(filePath) {
   return {
     path: abs,
     async write(event) {
+      const message = normalizeChatMessage(event.message);
       const row = {
         t: event.t || new Date().toISOString(),
         player: event.player,
         player_id: event.playerId,
         kind: event.kind,
-        message: event.message,
+        message,
         server_url: event.url || null,
         flag: event.flag ?? null,
       };
+      if (message !== event.message) row.raw_message = event.message;
       stream.write(JSON.stringify(row) + "\n");
       count++;
       return row;
@@ -45,6 +54,7 @@ export async function createPostgresStore(connectionString) {
   return {
     path: "postgres",
     async write(event) {
+      const message = normalizeChatMessage(event.message);
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -61,7 +71,7 @@ export async function createPostgresStore(connectionString) {
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            RETURNING id`,
           [event.t || new Date().toISOString(), event.playerId, event.kind,
-            event.message, event.url || null, event.flag ?? null, event],
+            message, event.url || null, event.flag ?? null, event],
         );
         await client.query("COMMIT");
         return { id: result.rows[0].id };

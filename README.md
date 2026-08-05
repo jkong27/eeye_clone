@@ -55,6 +55,7 @@ node src/logger.js --headless          # after profile is logged in
 node src/logger.js --out ./data/uswest.jsonl
 node src/logger.js --schema            # print Postgres DDL
 node src/logger.js --manual            # manually park the bot
+node src/logger.js --play-delay-seconds 3
 ```
 
 For unattended operation, set `DATABASE_URL`; the logger creates or updates

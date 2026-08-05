@@ -20,6 +20,7 @@ import {
   combineStores,
   createJsonlStore,
   createPostgresStore,
+  normalizeChatMessage,
   POSTGRES_SCHEMA,
 } from "./store.js";
 import { WS_HOOK_SOURCE } from "./ws-hook.js";
@@ -36,6 +37,7 @@ function parseArgs(argv) {
     databaseUrl: process.env.DATABASE_URL || null,
     keepaliveMinutes: 12,
     staleSeconds: 90,
+    playDelaySeconds: 2,
     manual: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -48,6 +50,7 @@ function parseArgs(argv) {
     else if (a === "--database-url") args.databaseUrl = argv[++i];
     else if (a === "--keepalive-minutes") args.keepaliveMinutes = Number(argv[++i]);
     else if (a === "--stale-seconds") args.staleSeconds = Number(argv[++i]);
+    else if (a === "--play-delay-seconds") args.playDelaySeconds = Number(argv[++i]);
     else if (a === "--manual") args.manual = true;
     else if (a === "--help" || a === "-h") args.help = true;
   }
@@ -69,15 +72,21 @@ function ask(question) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!(args.keepaliveMinutes > 0) || !(args.staleSeconds > 0)) {
-    throw new Error("keepalive-minutes and stale-seconds must be positive numbers");
+  if (
+    !(args.keepaliveMinutes > 0) ||
+    !(args.staleSeconds > 0) ||
+    !(args.playDelaySeconds >= 0)
+  ) {
+    throw new Error(
+      "keepalive-minutes and stale-seconds must be positive; play-delay-seconds cannot be negative",
+    );
   }
   if (args.help) {
     console.log(`StarBreak chat logger
 
   node src/logger.js [--headed|--headless] [--profile DIR] [--out FILE]
                      [--database-url URL] [--keepalive-minutes N]
-                     [--stale-seconds N] [--manual]
+                     [--stale-seconds N] [--play-delay-seconds N] [--manual]
 
 Logs player chat and SYSTEM announcements to JSONL.
 SYSTEM is a special player (player_id = "SYSTEM").
@@ -142,7 +151,7 @@ Postgres schema (optional) is printed with --schema.`);
         decoded++;
         const who =
           ev.kind === "system" ? "SYSTEM" : `${ev.player} (${ev.playerId})`;
-        console.log(`[chat] <${who}> ${ev.message}`);
+        console.log(`[chat] <${who}> ${normalizeChatMessage(ev.message)}`);
       }
     } catch (err) {
       console.error("[eeye] frame error:", err.message);
@@ -174,6 +183,10 @@ Postgres schema (optional) is printed with --schema.`);
       const box = await canvas.boundingBox();
       if (!box) throw new Error("StarBreak canvas has no visible bounds");
 
+      if (args.playDelaySeconds > 0) {
+        console.log(`[eeye] waiting ${args.playDelaySeconds}s for menu stabilization`);
+        await page.waitForTimeout(args.playDelaySeconds * 1000);
+      }
       // PLAY is at approximately (25%, 53%) of StarBreak's fixed canvas.
       await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.527);
       console.log(`[eeye] Play clicked (attempt ${attempt}/3); waiting for game shard`);
@@ -193,14 +206,24 @@ Postgres schema (optional) is printed with --schema.`);
     if (reconnecting || page.isClosed()) return;
     reconnecting = true;
     console.warn(`[eeye] reconnecting: ${reason}`);
+    let attempt = 0;
     try {
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      activeGameSocket = null;
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-      await enterGame();
-      lastWsActivity = Date.now();
-    } catch (error) {
-      console.error("[eeye] reconnect failed:", error.message);
+      while (!page.isClosed()) {
+        attempt++;
+        const delayMs = Math.min(3000 * 2 ** (attempt - 1), 30000);
+        console.log(`[eeye] reconnect attempt ${attempt} in ${delayMs / 1000}s`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        try {
+          activeGameSocket = null;
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+          await enterGame();
+          lastWsActivity = Date.now();
+          console.log("[eeye] reconnection complete");
+          return;
+        } catch (error) {
+          console.error(`[eeye] reconnect attempt ${attempt} failed:`, error.message);
+        }
+      }
     } finally {
       reconnecting = false;
     }
