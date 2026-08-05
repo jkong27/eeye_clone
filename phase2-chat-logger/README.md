@@ -55,6 +55,19 @@ node src/logger.js --out ./data/uswest.jsonl
 node src/logger.js --schema            # print Postgres DDL
 ```
 
+For unattended operation, set `DATABASE_URL`; the logger creates or updates
+the schema at startup and writes to PostgreSQL and the local JSONL safety copy.
+It sends brief opposing movement inputs every 12 minutes and reloads the page
+when the game WebSocket closes or stops receiving traffic.
+
+```bash
+DATABASE_URL=postgresql://user:pass@host:5432/eeye node src/logger.js --headless
+node src/logger.js --keepalive-minutes 12 --stale-seconds 90
+```
+
+The persistent browser profile must be logged in and parked in Eschaton before
+headless operation. Both timers are configurable through the shown flags.
+
 ## Message shape
 
 ```json
@@ -80,10 +93,12 @@ System example:
 }
 ```
 
-## Postgres (optional, later)
+## Postgres
 
 ```bash
 psql "$DATABASE_URL" -f schema.sql
 ```
 
-Upsert real players on first sighting; SYSTEM is seeded by the schema.
+The schema is also applied automatically when `DATABASE_URL` or
+`--database-url` is provided. Players are upserted on sight and SYSTEM is
+seeded by the schema.

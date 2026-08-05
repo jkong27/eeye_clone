@@ -1,0 +1,6 @@
+phase1-ws-capture/*
+**/node_modules/
+**/*.log
+phase2-chat-logger/data/
+phase2-chat-logger/ws-out.jsonl
+phase2-chat-logger/package-lock.json

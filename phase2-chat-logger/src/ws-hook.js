@@ -5,6 +5,7 @@
 export const WS_HOOK_SOURCE = `(() => {
   if (window.__eeyeWsHooked) return;
   window.__eeyeWsHooked = true;
+  let lastActivityNotice = 0;
 
   function toBytes(data) {
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -60,7 +61,21 @@ export const WS_HOOK_SOURCE = `(() => {
     const ws = protocols ? new Native(url, protocols) : new Native(url);
     const urlStr = String(url);
     console.log("[eeye] ws open", urlStr);
+    ws.addEventListener("open", () => {
+      window.__eeyeOnWsStatus?.({ type: "open", url: urlStr, t: new Date().toISOString() });
+    });
+    ws.addEventListener("close", (event) => {
+      window.__eeyeOnWsStatus?.({ type: "close", url: urlStr,
+        t: new Date().toISOString(), code: event.code, reason: event.reason });
+    });
+    ws.addEventListener("error", () => {
+      window.__eeyeOnWsStatus?.({ type: "error", url: urlStr, t: new Date().toISOString() });
+    });
     ws.addEventListener("message", (ev) => {
+      if (Date.now() - lastActivityNotice > 5000) {
+        lastActivityNotice = Date.now();
+        window.__eeyeOnWsActivity?.(new Date().toISOString());
+      }
       emit(urlStr, ev.data).catch(() => {});
     });
     return ws;
@@ -70,38 +85,6 @@ export const WS_HOOK_SOURCE = `(() => {
   Wrapped.OPEN = Native.OPEN;
   Wrapped.CLOSING = Native.CLOSING;
   Wrapped.CLOSED = Native.CLOSED;
-
-  const nativeSend = WebSocket.prototype.send;
-
-  WebSocket.prototype.send = function (data) {
-    const handler = window.__eeyeOnWsSend;
-
-    if (handler) {
-      const emit = async () => {
-        let bytes = toBytes(data);
-
-        if (!bytes && data instanceof Blob) {
-          bytes = new Uint8Array(await data.arrayBuffer());
-        }
-
-        if (!bytes) return;
-
-        console.log("[eeye] ws send", bytes.length, "bytes");
-
-        handler({
-          t: new Date().toISOString(),
-          direction: "out",
-          url: this.url,
-          b64: bytesToBase64(bytes),
-        });
-      };
-
-      emit().catch(console.error);
-    }
-
-    return nativeSend.call(this, data);
-  };
-
 
   window.WebSocket = Wrapped;
   console.log("[eeye] websocket hook installed");

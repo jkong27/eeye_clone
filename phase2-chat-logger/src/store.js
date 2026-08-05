@@ -3,6 +3,9 @@
  */
 import fs from "fs";
 import path from "path";
+import pg from "pg";
+
+const { Pool } = pg;
 
 export function createJsonlStore(filePath) {
   const abs = path.resolve(filePath);
@@ -31,6 +34,57 @@ export function createJsonlStore(filePath) {
     },
     get count() {
       return count;
+    },
+  };
+}
+
+export async function createPostgresStore(connectionString) {
+  const pool = new Pool({ connectionString });
+  await pool.query("SELECT 1");
+  await pool.query(POSTGRES_SCHEMA);
+  return {
+    path: "postgres",
+    async write(event) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `INSERT INTO players (player_id, name, is_system, last_seen)
+           VALUES ($1, $2, $3, now())
+           ON CONFLICT (player_id) DO UPDATE
+             SET name = EXCLUDED.name, last_seen = now()`,
+          [event.playerId, event.player, event.kind === "system"],
+        );
+        const result = await client.query(
+          `INSERT INTO chat_messages
+             (received_at, player_id, kind, message, server_url, flag, raw)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id`,
+          [event.t || new Date().toISOString(), event.playerId, event.kind,
+            event.message, event.url || null, event.flag ?? null, event],
+        );
+        await client.query("COMMIT");
+        return { id: result.rows[0].id };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async close() { await pool.end(); },
+  };
+}
+
+export function combineStores(stores) {
+  const active = stores.filter(Boolean);
+  return {
+    path: active.map((store) => store.path).join(" + "),
+    async write(event) {
+      return Promise.all(active.map((store) => store.write(event)));
+    },
+    async close() {
+      await Promise.allSettled(active.map((store) => store.close()));
     },
   };
 }

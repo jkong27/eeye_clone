@@ -10,6 +10,7 @@
     "test:decode": "node src/decode-file.js ../phase1-ws-capture/captures/starbreak-ws-1784880099832.jsonl"
   },
   "dependencies": {
+    "pg": "^8.22.0",
     "playwright": "^1.54.1"
   }
 }
