@@ -101,7 +101,8 @@ Postgres schema (optional) is printed with --schema.`);
 
   fs.mkdirSync(args.profile, { recursive: true });
   const jsonlStore = createJsonlStore(args.out);
-  const postgresStore = args.databaseUrl
+  const postgresEnabled = args.databaseUrl || process.env.PGDATABASE;
+  const postgresStore = postgresEnabled
     ? await createPostgresStore(args.databaseUrl)
     : null;
   const store = combineStores([jsonlStore, postgresStore]);

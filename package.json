@@ -7,6 +7,7 @@
   "scripts": {
     "decode": "node src/decode-file.js",
     "logger": "node src/logger.js",
+    "ui": "node --env-file-if-exists=.env src/server.js",
     "test:decode": "node src/decode-file.js ./phase1-ws-capture/captures/starbreak-ws-1784880099832.jsonl"
   },
   "dependencies": {

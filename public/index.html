@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Eschaton Eye</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">STARBREAK · ESCHATON ARCHIVE</p>
+        <h1>Find a player.<br><span>Read the signal.</span></h1>
+        <p class="intro">Search public lobby chat history by player name or ID.</p>
+      </header>
+
+      <section class="search-panel" aria-label="Player search">
+        <label for="search">PLAYER LOOKUP</label>
+        <div class="search-row">
+          <input id="search" type="search" autocomplete="off" placeholder="Name or player ID" autofocus>
+          <button id="search-button" type="button">SEARCH</button>
+        </div>
+        <p id="status" role="status">Enter a player name to begin.</p>
+        <div id="players" class="players" aria-live="polite"></div>
+      </section>
+
+      <section id="history" class="history" hidden>
+        <div class="history-heading">
+          <div>
+            <p class="eyebrow">TRANSMISSION LOG</p>
+            <h2 id="player-name"></h2>
+            <p id="player-id" class="player-id"></p>
+          </div>
+          <p id="message-count" class="count"></p>
+        </div>
+        <div id="messages" class="messages"></div>
+        <button id="load-more" class="load-more" type="button" hidden>LOAD EARLIER</button>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

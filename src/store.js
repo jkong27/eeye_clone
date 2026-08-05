@@ -47,8 +47,10 @@ export function createJsonlStore(filePath) {
   };
 }
 
-export async function createPostgresStore(connectionString) {
-  const pool = new Pool({ connectionString });
+export async function createPostgresStore(connectionString = null) {
+  // With no URL, node-postgres reads PGHOST, PGPORT, PGDATABASE,
+  // PGUSER, and PGPASSWORD from the environment.
+  const pool = new Pool(connectionString ? { connectionString } : {});
   await pool.query("SELECT 1");
   await pool.query(POSTGRES_SCHEMA);
   return {

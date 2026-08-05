@@ -58,7 +58,8 @@ node src/logger.js --manual            # manually park the bot
 node src/logger.js --play-delay-seconds 3
 ```
 
-For unattended operation, set `DATABASE_URL`; the logger creates or updates
+For unattended operation, set `DATABASE_URL` or the standard `PGHOST`,
+`PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` variables. The logger creates or updates
 the schema at startup and writes to PostgreSQL and the local JSONL safety copy.
 It sends brief opposing movement inputs every 12 minutes and reloads the page
 when the game WebSocket closes or stops receiving traffic.
@@ -105,3 +106,17 @@ psql "$DATABASE_URL" -f schema.sql
 The schema is also applied automatically when `DATABASE_URL` or
 `--database-url` is provided. Players are upserted on sight and SYSTEM is
 seeded by the schema.
+
+## Query UI
+
+Start the read-only player chat search UI with the same PostgreSQL environment:
+
+```bash
+node --env-file=.env src/server.js
+# or: npm run ui
+```
+
+Open `http://127.0.0.1:3000`. Search results and message queries exclude SYSTEM,
+use parameterized SQL, and never return the raw event payload. For deployment,
+set `HOST=0.0.0.0` and optionally set `PORT`; the local default binds only to
+`127.0.0.1`.
