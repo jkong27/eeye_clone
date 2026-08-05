@@ -5,7 +5,6 @@
 export const WS_HOOK_SOURCE = `(() => {
   if (window.__eeyeWsHooked) return;
   window.__eeyeWsHooked = true;
-  let lastActivityNotice = 0;
 
   function toBytes(data) {
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -60,6 +59,7 @@ export const WS_HOOK_SOURCE = `(() => {
   function Wrapped(url, protocols) {
     const ws = protocols ? new Native(url, protocols) : new Native(url);
     const urlStr = String(url);
+    let lastActivityNotice = 0;
     console.log("[eeye] ws open", urlStr);
     ws.addEventListener("open", () => {
       window.__eeyeOnWsStatus?.({ type: "open", url: urlStr, t: new Date().toISOString() });
@@ -74,7 +74,7 @@ export const WS_HOOK_SOURCE = `(() => {
     ws.addEventListener("message", (ev) => {
       if (Date.now() - lastActivityNotice > 5000) {
         lastActivityNotice = Date.now();
-        window.__eeyeOnWsActivity?.(new Date().toISOString());
+        window.__eeyeOnWsActivity?.({ url: urlStr, t: new Date().toISOString() });
       }
       emit(urlStr, ev.data).catch(() => {});
     });

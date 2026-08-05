@@ -42,9 +42,11 @@ node src/logger.js
 ```
 
 1. Chromium opens Starbreak (profile saved under `data/browser-profile/`)
-2. Log in and park the character in **Eschaton**
-3. Press Enter in the terminal
-4. Chat lines print and append to `data/chat.jsonl`
+2. The logger clicks **Play** and waits for a real game-shard WebSocket
+3. Chat lines print and append to `data/chat.jsonl`
+
+The saved profile must already be signed in. Use `--manual` to restore the old
+interactive setup flow when login, character, or server selection needs attention.
 
 Stop with Ctrl+C.
 
@@ -52,6 +54,7 @@ Stop with Ctrl+C.
 node src/logger.js --headless          # after profile is logged in
 node src/logger.js --out ./data/uswest.jsonl
 node src/logger.js --schema            # print Postgres DDL
+node src/logger.js --manual            # manually park the bot
 ```
 
 For unattended operation, set `DATABASE_URL`; the logger creates or updates

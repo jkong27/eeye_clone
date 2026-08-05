@@ -3,3 +3,4 @@ phase1-ws-capture/*
 **/*.log
 data/
 ws-out.jsonl
+.env

@@ -36,6 +36,7 @@ function parseArgs(argv) {
     databaseUrl: process.env.DATABASE_URL || null,
     keepaliveMinutes: 12,
     staleSeconds: 90,
+    manual: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -47,6 +48,7 @@ function parseArgs(argv) {
     else if (a === "--database-url") args.databaseUrl = argv[++i];
     else if (a === "--keepalive-minutes") args.keepaliveMinutes = Number(argv[++i]);
     else if (a === "--stale-seconds") args.staleSeconds = Number(argv[++i]);
+    else if (a === "--manual") args.manual = true;
     else if (a === "--help" || a === "-h") args.help = true;
   }
   return args;
@@ -75,7 +77,7 @@ async function main() {
 
   node src/logger.js [--headed|--headless] [--profile DIR] [--out FILE]
                      [--database-url URL] [--keepalive-minutes N]
-                     [--stale-seconds N]
+                     [--stale-seconds N] [--manual]
 
 Logs player chat and SYSTEM announcements to JSONL.
 SYSTEM is a special player (player_id = "SYSTEM").
@@ -98,6 +100,17 @@ Postgres schema (optional) is printed with --schema.`);
   let decoded = 0;
   let lastWsActivity = Date.now();
   let reconnecting = false;
+  let monitoringArmed = false;
+  let activeGameSocket = null;
+
+  const isGameSocket = (url) => {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return host.endsWith(".sbmach.com") && host !== "prod.sbmach.com";
+    } catch {
+      return false;
+    }
+  };
 
   console.log("[eeye] profile:", args.profile);
   console.log("[eeye] writing:", store.path);
@@ -136,13 +149,45 @@ Postgres schema (optional) is printed with --schema.`);
     }
   });
 
-  await context.exposeBinding("__eeyeOnWsActivity", () => {
-    lastWsActivity = Date.now();
+  await context.exposeBinding("__eeyeOnWsActivity", (_source, activity) => {
+    if (activity.url === activeGameSocket) lastWsActivity = Date.now();
   });
 
   await context.addInitScript({ content: WS_HOOK_SOURCE });
 
   const page = context.pages()[0] || (await context.newPage());
+
+  const waitForGameSocket = async (timeoutMs) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (activeGameSocket) return true;
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+
+  const enterGame = async () => {
+    activeGameSocket = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const canvas = page.locator("canvas").first();
+      await canvas.waitFor({ state: "visible", timeout: 30000 });
+      const box = await canvas.boundingBox();
+      if (!box) throw new Error("StarBreak canvas has no visible bounds");
+
+      // PLAY is at approximately (25%, 53%) of StarBreak's fixed canvas.
+      await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.527);
+      console.log(`[eeye] Play clicked (attempt ${attempt}/3); waiting for game shard`);
+      if (await waitForGameSocket(30000)) {
+        await page.waitForTimeout(3000);
+        console.log(`[eeye] game shard ready: ${activeGameSocket}`);
+        return;
+      }
+      console.warn("[eeye] matchmaking did not yield a game shard; retrying");
+    }
+    throw new Error(
+      "Could not enter the game automatically. Run with --manual to inspect login or server state.",
+    );
+  };
 
   const reconnect = async (reason) => {
     if (reconnecting || page.isClosed()) return;
@@ -150,7 +195,9 @@ Postgres schema (optional) is printed with --schema.`);
     console.warn(`[eeye] reconnecting: ${reason}`);
     try {
       await new Promise((resolve) => setTimeout(resolve, 3000));
+      activeGameSocket = null;
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+      await enterGame();
       lastWsActivity = Date.now();
     } catch (error) {
       console.error("[eeye] reconnect failed:", error.message);
@@ -160,22 +207,43 @@ Postgres schema (optional) is printed with --schema.`);
   };
 
   await context.exposeBinding("__eeyeOnWsStatus", async (_source, status) => {
-    console.log(`[eeye] websocket ${status.type}: ${status.url}`);
-    if (status.type === "open") lastWsActivity = Date.now();
-    if (status.type === "close" || status.type === "error") {
+    const gameSocket = isGameSocket(status.url);
+    console.log(
+      `[eeye] websocket ${status.type}: ${status.url}${gameSocket ? " [game]" : " [control]"}`,
+    );
+    if (status.type === "open" && gameSocket) {
+      activeGameSocket = status.url;
+      lastWsActivity = Date.now();
+    }
+    const activeGameSocketFailed =
+      monitoringArmed &&
+      gameSocket &&
+      status.url === activeGameSocket &&
+      (status.type === "close" || status.type === "error");
+    if (activeGameSocketFailed) {
       void reconnect(`websocket ${status.type}${status.code ? ` (${status.code})` : ""}`);
     }
   });
 
   await page.goto(args.url, { waitUntil: "domcontentloaded" });
 
-  console.log(`
-[eeye] Browser open.
+  if (args.manual) {
+    console.log(`
+[eeye] Manual setup enabled.
   1. Log in if needed
   2. Enter Eschaton (lobby) on your target server
   3. Come back here and press Enter to mark "online"
 `);
-  await ask("Press Enter when the bot is parked in Eschaton… ");
+    await ask("Press Enter when the bot is parked in Eschaton… ");
+  } else {
+    console.log("[eeye] automatically entering Eschaton");
+    await enterGame();
+  }
+  monitoringArmed = true;
+  lastWsActivity = Date.now();
+  if (!activeGameSocket) {
+    console.warn("[eeye] no game shard websocket detected yet; watchdog is armed");
+  }
   console.log(
     "[eeye] logging chat (Ctrl+C to stop). SYSTEM = special player.\n",
   );
@@ -207,7 +275,11 @@ Postgres schema (optional) is printed with --schema.`);
   keepalive.unref();
 
   const watchdog = setInterval(() => {
-    if (Date.now() - lastWsActivity > args.staleSeconds * 1000) {
+    if (
+      monitoringArmed &&
+      activeGameSocket &&
+      Date.now() - lastWsActivity > args.staleSeconds * 1000
+    ) {
       void reconnect(`no websocket traffic for ${args.staleSeconds}s`);
     }
   }, 15_000);
