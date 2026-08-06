@@ -1,0 +1,77 @@
+name: eeye
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-eeye}
+      POSTGRES_USER: ${PGUSER:-eeye_app}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - backend
+
+  ui:
+    image: eeye-ui:local
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-eeye}
+      PGUSER: ${PGUSER:-eeye_app}
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+    ports:
+      - "${UI_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+      - edge
+
+  collector:
+    profiles: ["collector"]
+    image: eeye-collector:local
+    build:
+      context: .
+      dockerfile: Dockerfile.collector
+    init: true
+    shm_size: 1gb
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-eeye}
+      PGUSER: ${PGUSER:-eeye_app}
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+    volumes:
+      - collector_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+      - edge
+
+volumes:
+  postgres_data:
+  collector_data:
+
+networks:
+  backend:
+    internal: true
+  edge:

@@ -1,78 +1,170 @@
-# Eschaton Eye clone — StarBreak chat logger
+# Eschaton Eye clone
 
-Decode lobby chat from the web client WebSocket and append to JSONL.
-**SYSTEM** is a special player (`player_id = "SYSTEM"`) for announcements
-(portal opens, clear messages, etc.).
+An always-on StarBreak lobby chat collector with PostgreSQL storage and a
+read-only player search UI. Player chat is stored under the real player name
+and ID. Game announcements use the special player ID `SYSTEM`.
 
-## Layout
+## Architecture
 
-| Path                 | Purpose                                          |
-| -------------------- | ------------------------------------------------ |
-| `src/decode.js`      | Parse type `0x14` chat protobufs                 |
-| `src/decode-file.js` | Offline: capture JSONL → chat events             |
-| `src/logger.js`      | Playwright bot (persistent Chromium)             |
-| `src/store.js`       | JSONL writer + Postgres schema helper            |
-| `schema.sql`         | Postgres tables (`players`, `chat_messages`)     |
-| `data/`              | Browser profile + live `chat.jsonl` (gitignored) |
+```text
+StarBreak web client -> Playwright collector -> PostgreSQL <- Query UI/API
+                              |
+                              +-> data/chat.jsonl safety copy
+```
 
-## Setup
+| Path | Purpose |
+| --- | --- |
+| `src/logger.js` | Playwright collector, reconnect loop, and activity keepalive |
+| `src/ws-hook.js` | Browser-side WebSocket observer |
+| `src/decode.js` | Type `0x14` chat protobuf decoder |
+| `src/decode-file.js` | Offline capture decoder |
+| `src/store.js` | JSONL and PostgreSQL storage |
+| `src/server.js` | Read-only UI/API server |
+| `public/` | Player search frontend |
+| `schema.sql` | PostgreSQL schema |
+| `data/` | Browser profile, JSONL log, and health state (ignored by Git) |
+| `Dockerfile.collector` | Playwright collector image |
+| `Dockerfile.ui` | Lightweight UI/API image |
+| `compose.yaml` | PostgreSQL, UI, and gated collector services |
+| `phase1-ws-capture/` | Protocol research artifacts |
+
+## Local setup
+
+Requirements:
+
+- Node.js 24 or another version supporting `--env-file-if-exists`
+- PostgreSQL
+- Chromium installed through Playwright
+
+Install dependencies and the browser:
 
 ```bash
 npm install
 npx playwright install chromium
 ```
 
-## Offline decode (validate Phase 1 captures)
+Create `.env` from `.env.example` and provide a real password. The local setup
+supports PostgreSQL's standard split variables:
+
+```dotenv
+PGHOST=127.0.0.1
+PGPORT=5432
+PGDATABASE=eeye
+PGUSER=eeye_app
+PGPASSWORD=replace-with-a-long-random-password
+```
+
+`DATABASE_URL` is also supported and takes precedence when present. It is
+useful for managed/cloud PostgreSQL:
+
+```dotenv
+DATABASE_URL=postgresql://user:password@host:5432/eeye
+```
+
+Never commit `.env`; it is ignored by Git.
+
+## Run the collector locally
+
+```bash
+npm run logger
+```
+
+The collector:
+
+1. Reuses `data/browser-profile/`.
+2. Opens StarBreak and waits briefly for the canvas menu to stabilize.
+3. Clicks Play and retries until a game-shard WebSocket opens.
+4. Writes each decoded event to PostgreSQL and `data/chat.jsonl`.
+5. Sends brief opposing movement inputs every 12 minutes.
+6. Reconnects with capped backoff after a socket or network failure.
+
+The saved browser profile must already be signed in. Use `--manual` when login,
+character selection, or server selection needs attention.
+
+```bash
+npm run logger -- --manual
+npm run logger -- --headless
+npm run logger -- --out ./data/uswest.jsonl
+npm run logger -- --keepalive-minutes 12 --stale-seconds 90
+npm run logger -- --play-delay-seconds 3
+npm run logger -- --schema
+```
+
+Both `DATABASE_URL` and the split `PG*` variables enable PostgreSQL. The logger
+applies the schema at startup. Without either configuration, it writes only the
+JSONL safety copy.
+
+Stop the collector with Ctrl+C.
+
+## Run the query UI locally
+
+```bash
+npm run ui
+```
+
+Open `http://127.0.0.1:3000`. The UI searches non-SYSTEM players by name or
+exact player ID and displays paginated chat history. API queries are
+parameterized and do not return the raw event payload.
+
+The local server binds to `127.0.0.1` by default. Set `HOST=0.0.0.0` only when
+you intentionally want it reachable through the machine's network interfaces.
+
+## Docker Compose
+
+Requirements:
+
+- Docker Desktop or another Linux Docker engine
+- A `.env` containing `PGDATABASE`, `PGUSER`, and `PGPASSWORD`
+
+Start the containerized PostgreSQL 17 database and UI:
+
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose logs -f ui
+```
+
+Open `http://127.0.0.1:3000` (or the port set by `UI_PORT`). PostgreSQL is kept
+on an internal Docker network and is not published to the host.
+
+Compose uses its own persistent `eeye_postgres_data` volume. It does not read
+the existing host PostgreSQL database. Until the migration/cutover step is
+completed, this container database contains only newly imported or
+container-collected data.
+
+The collector is intentionally behind the `collector` profile because a fresh
+Linux Chromium profile must be logged in first:
+
+```bash
+docker compose --profile collector up -d collector
+```
+
+Do not start that profile before completing the container login bootstrap. Its
+browser profile and JSONL data persist in `eeye_collector_data`. The collector
+image is health-checked using live game-shard traffic; the UI health check also
+verifies its database connection.
+
+Useful Compose commands:
+
+```bash
+docker compose ps
+docker compose logs -f postgres ui
+docker compose stop
+docker compose up -d
+```
+
+## Offline capture decode
 
 ```bash
 npm run test:decode
-# or:
+# or
 node src/decode-file.js ./phase1-ws-capture/captures/starbreak-ws-1784880099832.jsonl
 ```
 
-Expected from the lobby test capture:
+The known fixture should decode a SYSTEM portal announcement and the player
+message `eeye-test-001`.
 
-- `<SYSTEM> Thetis has opened a portal to the Elite Fungus Cave`
-- `<PlayerName (6400132109041664)> eeye-test-001`
-
-## Live logger
-
-```bash
-node src/logger.js
-```
-
-1. Chromium opens Starbreak (profile saved under `data/browser-profile/`)
-2. The logger clicks **Play** and waits for a real game-shard WebSocket
-3. Chat lines print and append to `data/chat.jsonl`
-
-The saved profile must already be signed in. Use `--manual` to restore the old
-interactive setup flow when login, character, or server selection needs attention.
-
-Stop with Ctrl+C.
-
-```bash
-node src/logger.js --headless          # after profile is logged in
-node src/logger.js --out ./data/uswest.jsonl
-node src/logger.js --schema            # print Postgres DDL
-node src/logger.js --manual            # manually park the bot
-node src/logger.js --play-delay-seconds 3
-```
-
-For unattended operation, set `DATABASE_URL` or the standard `PGHOST`,
-`PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` variables. The logger creates or updates
-the schema at startup and writes to PostgreSQL and the local JSONL safety copy.
-It sends brief opposing movement inputs every 12 minutes and reloads the page
-when the game WebSocket closes or stops receiving traffic.
-
-```bash
-DATABASE_URL=postgresql://user:pass@host:5432/eeye node src/logger.js --headless
-node src/logger.js --keepalive-minutes 12 --stale-seconds 90
-```
-
-The persistent browser profile must be logged in and parked in Eschaton before
-headless operation. Both timers are configurable through the shown flags.
-
-## Message shape
+## Stored message shape
 
 ```json
 {
@@ -81,42 +173,20 @@ headless operation. Both timers are configurable through the shown flags.
   "player_id": "6400132109041664",
   "kind": "player",
   "message": "eeye-test-001",
-  "server_url": "wss://….sbmach.com:443/",
+  "server_url": "wss://example.sbmach.com:443/",
   "flag": null
 }
 ```
 
-System example:
+Control characters are normalized in the queryable message and console output.
+The original decoded message remains available in PostgreSQL's `raw` JSON.
 
-```json
-{
-  "player": "SYSTEM",
-  "player_id": "SYSTEM",
-  "kind": "system",
-  "message": "Thetis has opened a portal to the Elite Fungus Cave"
-}
-```
+## Current deployment status
 
-## Postgres
-
-```bash
-psql "$DATABASE_URL" -f schema.sql
-```
-
-The schema is also applied automatically when `DATABASE_URL` or
-`--database-url` is provided. Players are upserted on sight and SYSTEM is
-seeded by the schema.
-
-## Query UI
-
-Start the read-only player chat search UI with the same PostgreSQL environment:
-
-```bash
-node --env-file=.env src/server.js
-# or: npm run ui
-```
-
-Open `http://127.0.0.1:3000`. Search results and message queries exclude SYSTEM,
-use parameterized SQL, and never return the raw event payload. For deployment,
-set `HOST=0.0.0.0` and optionally set `PORT`; the local default binds only to
-`127.0.0.1`.
+- Local collector: working with automatic entry, keepalive, and reconnection.
+- Local PostgreSQL and UI: working.
+- Collector image: built and Chromium smoke-tested.
+- UI image: built and smoke-tested.
+- Compose PostgreSQL and UI: running and health-checked.
+- Container login bootstrap: next step.
+- Host database migration and cloud deployment: not completed yet.
