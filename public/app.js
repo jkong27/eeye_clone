@@ -69,6 +69,7 @@ function messageRow(message) {
 
 async function loadMessages(append = false) {
   if (!selectedPlayer) return;
+  if (append && !nextCursor) return;
   loadMore.disabled = true;
   const cursor = append && nextCursor ? `&before=${encodeURIComponent(nextCursor)}` : "";
   try {

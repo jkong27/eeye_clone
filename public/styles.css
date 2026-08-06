@@ -55,6 +55,7 @@ h2 { margin: 0; font-size: 34px; letter-spacing: -.03em; }
 .message time { color: var(--muted); font: 12px/1.5 Consolas, monospace; }
 .message p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .load-more { display: block; margin: 24px auto; height: 44px; }
+.load-more[hidden] { display: none; }
 .empty { padding: 48px 28px; color: var(--muted); text-align: center; }
 
 @media (max-width: 640px) {
