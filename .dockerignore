@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+data
+node_modules
+phase1-ws-capture
+ws-out.jsonl
+*.log
+Dockerfile*
+compose*.yml

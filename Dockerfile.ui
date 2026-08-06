@@ -1,0 +1,22 @@
+FROM node:24-bookworm-slim
+
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3000 \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY public ./public
+COPY src/server.js src/ui-healthcheck.js ./src/
+
+RUN chown -R node:node /app
+USER node
+
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["node", "src/ui-healthcheck.js"]
+
+CMD ["node", "src/server.js"]

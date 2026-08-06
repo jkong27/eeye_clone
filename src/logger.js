@@ -107,6 +107,7 @@ Postgres schema (optional) is printed with --schema.`);
     : null;
   const store = combineStores([jsonlStore, postgresStore]);
   const seen = new Set();
+  const healthPath = path.join(ROOT, "data", "collector-health.json");
   let decoded = 0;
   let lastWsActivity = Date.now();
   let reconnecting = false;
@@ -120,6 +121,18 @@ Postgres schema (optional) is printed with --schema.`);
     } catch {
       return false;
     }
+  };
+
+  const writeHealth = (status, detail = null) => {
+    const health = {
+      status,
+      detail,
+      game_socket: activeGameSocket,
+      updated_at: new Date().toISOString(),
+    };
+    fs.promises.writeFile(healthPath, JSON.stringify(health) + "\n").catch((error) => {
+      console.error("[eeye] health write failed:", error.message);
+    });
   };
 
   console.log("[eeye] profile:", args.profile);
@@ -160,7 +173,10 @@ Postgres schema (optional) is printed with --schema.`);
   });
 
   await context.exposeBinding("__eeyeOnWsActivity", (_source, activity) => {
-    if (activity.url === activeGameSocket) lastWsActivity = Date.now();
+    if (activity.url === activeGameSocket) {
+      lastWsActivity = Date.now();
+      writeHealth("connected");
+    }
   });
 
   await context.addInitScript({ content: WS_HOOK_SOURCE });
@@ -238,6 +254,7 @@ Postgres schema (optional) is printed with --schema.`);
     if (status.type === "open" && gameSocket) {
       activeGameSocket = status.url;
       lastWsActivity = Date.now();
+      writeHealth("connected");
     }
     const activeGameSocketFailed =
       monitoringArmed &&
@@ -245,6 +262,7 @@ Postgres schema (optional) is printed with --schema.`);
       status.url === activeGameSocket &&
       (status.type === "close" || status.type === "error");
     if (activeGameSocketFailed) {
+      writeHealth("reconnecting", `websocket ${status.type}`);
       void reconnect(`websocket ${status.type}${status.code ? ` (${status.code})` : ""}`);
     }
   });

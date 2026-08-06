@@ -1,0 +1,19 @@
+FROM mcr.microsoft.com/playwright:v1.61.1-noble
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY src ./src
+COPY schema.sql ./schema.sql
+
+RUN mkdir -p /app/data && chown -R pwuser:pwuser /app
+USER pwuser
+
+VOLUME ["/app/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=2m --retries=3 \
+  CMD ["node", "src/healthcheck.js"]
+
+CMD ["node", "src/logger.js", "--headless"]
