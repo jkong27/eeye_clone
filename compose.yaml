@@ -67,6 +67,25 @@ services:
       - backend
       - edge
 
+  bootstrap:
+    profiles: ["bootstrap"]
+    image: eeye-collector:local
+    build:
+      context: .
+      dockerfile: Dockerfile.collector
+    init: true
+    shm_size: 1gb
+    restart: "no"
+    healthcheck:
+      disable: true
+    command: ["/bin/sh", "/app/scripts/bootstrap.sh"]
+    ports:
+      - "127.0.0.1:${BOOTSTRAP_PORT:-6080}:6080"
+    volumes:
+      - collector_data:/app/data
+    networks:
+      - edge
+
 volumes:
   postgres_data:
   collector_data:

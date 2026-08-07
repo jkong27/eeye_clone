@@ -8,7 +8,7 @@
  * Usage:
  *   node src/logger.js
  *   node src/logger.js --headed
- *   node src/logger.js --profile ./data/profile --out ./data/chat.jsonl
+ *   node src/logger.js --profile ./data/profile
  */
 import fs from "fs";
 import path from "path";
@@ -17,8 +17,6 @@ import { chromium } from "playwright";
 import { fileURLToPath } from "url";
 import { decodeFrame } from "./decode.js";
 import {
-  combineStores,
-  createJsonlStore,
   createPostgresStore,
   normalizeChatMessage,
   POSTGRES_SCHEMA,
@@ -32,7 +30,6 @@ function parseArgs(argv) {
   const args = {
     headed: true,
     profile: path.join(ROOT, "data", "browser-profile"),
-    out: path.join(ROOT, "data", "chat.jsonl"),
     url: "https://www.starbreak.com/",
     databaseUrl: process.env.DATABASE_URL || null,
     keepaliveMinutes: 12,
@@ -45,7 +42,6 @@ function parseArgs(argv) {
     if (a === "--headed") args.headed = true;
     else if (a === "--headless") args.headed = false;
     else if (a === "--profile") args.profile = path.resolve(argv[++i]);
-    else if (a === "--out") args.out = path.resolve(argv[++i]);
     else if (a === "--url") args.url = argv[++i];
     else if (a === "--database-url") args.databaseUrl = argv[++i];
     else if (a === "--keepalive-minutes") args.keepaliveMinutes = Number(argv[++i]);
@@ -84,11 +80,11 @@ async function main() {
   if (args.help) {
     console.log(`StarBreak chat logger
 
-  node src/logger.js [--headed|--headless] [--profile DIR] [--out FILE]
+  node src/logger.js [--headed|--headless] [--profile DIR]
                      [--database-url URL] [--keepalive-minutes N]
                      [--stale-seconds N] [--play-delay-seconds N] [--manual]
 
-Logs player chat and SYSTEM announcements to JSONL.
+Logs player chat and SYSTEM announcements to PostgreSQL.
 SYSTEM is a special player (player_id = "SYSTEM").
 
 Postgres schema (optional) is printed with --schema.`);
@@ -100,12 +96,11 @@ Postgres schema (optional) is printed with --schema.`);
   }
 
   fs.mkdirSync(args.profile, { recursive: true });
-  const jsonlStore = createJsonlStore(args.out);
   const postgresEnabled = args.databaseUrl || process.env.PGDATABASE;
-  const postgresStore = postgresEnabled
-    ? await createPostgresStore(args.databaseUrl)
-    : null;
-  const store = combineStores([jsonlStore, postgresStore]);
+  if (!postgresEnabled) {
+    throw new Error("PostgreSQL configuration is required (DATABASE_URL or PGDATABASE).");
+  }
+  const store = await createPostgresStore(args.databaseUrl);
   const seen = new Set();
   const healthPath = path.join(ROOT, "data", "collector-health.json");
   let decoded = 0;
@@ -136,7 +131,7 @@ Postgres schema (optional) is printed with --schema.`);
   };
 
   console.log("[eeye] profile:", args.profile);
-  console.log("[eeye] writing:", store.path);
+  console.log("[eeye] writing: postgres");
   console.log("[eeye] launching Chromium…");
 
   const context = await chromium.launchPersistentContext(args.profile, {

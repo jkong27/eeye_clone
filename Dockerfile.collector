@@ -3,10 +3,18 @@ FROM mcr.microsoft.com/playwright:v1.61.1-noble
 ENV NODE_ENV=production
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      fluxbox \
+      novnc \
+      websockify \
+      x11vnc \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY src ./src
+COPY scripts ./scripts
 COPY schema.sql ./schema.sql
 
 RUN mkdir -p /app/data && chown -R pwuser:pwuser /app

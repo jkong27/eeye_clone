@@ -8,8 +8,6 @@ and ID. Game announcements use the special player ID `SYSTEM`.
 
 ```text
 StarBreak web client -> Playwright collector -> PostgreSQL <- Query UI/API
-                              |
-                              +-> data/chat.jsonl safety copy
 ```
 
 | Path | Purpose |
@@ -18,11 +16,11 @@ StarBreak web client -> Playwright collector -> PostgreSQL <- Query UI/API
 | `src/ws-hook.js` | Browser-side WebSocket observer |
 | `src/decode.js` | Type `0x14` chat protobuf decoder |
 | `src/decode-file.js` | Offline capture decoder |
-| `src/store.js` | JSONL and PostgreSQL storage |
+| `src/store.js` | PostgreSQL storage and message normalization |
 | `src/server.js` | Read-only UI/API server |
 | `public/` | Player search frontend |
 | `schema.sql` | PostgreSQL schema |
-| `data/` | Browser profile, JSONL log, and health state (ignored by Git) |
+| `data/` | Browser profile and health state (ignored by Git) |
 | `Dockerfile.collector` | Playwright collector image |
 | `Dockerfile.ui` | Lightweight UI/API image |
 | `compose.yaml` | PostgreSQL, UI, and gated collector services |
@@ -74,7 +72,7 @@ The collector:
 1. Reuses `data/browser-profile/`.
 2. Opens StarBreak and waits briefly for the canvas menu to stabilize.
 3. Clicks Play and retries until a game-shard WebSocket opens.
-4. Writes each decoded event to PostgreSQL and `data/chat.jsonl`.
+4. Writes each decoded event to PostgreSQL.
 5. Sends brief opposing movement inputs every 12 minutes.
 6. Reconnects with capped backoff after a socket or network failure.
 
@@ -84,15 +82,13 @@ character selection, or server selection needs attention.
 ```bash
 npm run logger -- --manual
 npm run logger -- --headless
-npm run logger -- --out ./data/uswest.jsonl
 npm run logger -- --keepalive-minutes 12 --stale-seconds 90
 npm run logger -- --play-delay-seconds 3
 npm run logger -- --schema
 ```
 
 Both `DATABASE_URL` and the split `PG*` variables enable PostgreSQL. The logger
-applies the schema at startup. Without either configuration, it writes only the
-JSONL safety copy.
+requires PostgreSQL configuration and applies the schema at startup.
 
 Stop the collector with Ctrl+C.
 
@@ -140,9 +136,28 @@ docker compose --profile collector up -d collector
 ```
 
 Do not start that profile before completing the container login bootstrap. Its
-browser profile and JSONL data persist in `eeye_collector_data`. The collector
+browser profile and health state persist in `eeye_collector_data`. The collector
 image is health-checked using live game-shard traffic; the UI health check also
 verifies its database connection.
+
+Bootstrap the Linux browser profile through a temporary noVNC session bound to
+localhost:
+
+```bash
+docker compose --profile bootstrap up -d bootstrap
+```
+
+Open `http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale`, sign in to
+StarBreak, and verify the account name appears on the home screen. Then stop
+the bootstrap service cleanly so Chromium flushes the profile:
+
+```bash
+docker compose --profile bootstrap stop bootstrap
+```
+
+The noVNC port is unauthenticated but is published only on `127.0.0.1`. Do not
+change that binding to a public interface. Never run `bootstrap` and
+`collector` at the same time because Chromium profiles support only one writer.
 
 Useful Compose commands:
 
@@ -187,6 +202,7 @@ The original decoded message remains available in PostgreSQL's `raw` JSON.
 - Local PostgreSQL and UI: working.
 - Collector image: built and Chromium smoke-tested.
 - UI image: built and smoke-tested.
-- Compose PostgreSQL and UI: running and health-checked.
-- Container login bootstrap: next step.
-- Host database migration and cloud deployment: not completed yet.
+- Compose PostgreSQL, UI, and collector: running and health-checked.
+- Container login bootstrap: working through localhost-only noVNC.
+- Linux headless collector: signed in, entering Eschaton, and storing messages.
+- Cloud deployment: not completed yet.

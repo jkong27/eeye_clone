@@ -1,8 +1,3 @@
-/**
- * Append-only chat storage: JSONL file (+ optional Postgres later).
- */
-import fs from "fs";
-import path from "path";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -14,43 +9,16 @@ export function normalizeChatMessage(message) {
     .trim();
 }
 
-export function createJsonlStore(filePath) {
-  const abs = path.resolve(filePath);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  const stream = fs.createWriteStream(abs, { flags: "a" });
-  let count = 0;
-
-  return {
-    path: abs,
-    async write(event) {
-      const message = normalizeChatMessage(event.message);
-      const row = {
-        t: event.t || new Date().toISOString(),
-        player: event.player,
-        player_id: event.playerId,
-        kind: event.kind,
-        message,
-        server_url: event.url || null,
-        flag: event.flag ?? null,
-      };
-      if (message !== event.message) row.raw_message = event.message;
-      stream.write(JSON.stringify(row) + "\n");
-      count++;
-      return row;
-    },
-    async close() {
-      await new Promise((resolve) => stream.end(resolve));
-    },
-    get count() {
-      return count;
-    },
-  };
-}
-
 export async function createPostgresStore(connectionString = null) {
   // With no URL, node-postgres reads PGHOST, PGPORT, PGDATABASE,
   // PGUSER, and PGPASSWORD from the environment.
   const pool = new Pool(connectionString ? { connectionString } : {});
+  pool.on("error", (error) => {
+    // Idle clients can be terminated during database maintenance/restarts.
+    // Keeping this listener prevents node-postgres from treating that as an
+    // uncaught process-level error; the pool reconnects on the next query.
+    console.error("[postgres] idle connection error:", error.message);
+  });
   await pool.query("SELECT 1");
   await pool.query(POSTGRES_SCHEMA);
   return {
@@ -85,19 +53,6 @@ export async function createPostgresStore(connectionString = null) {
       }
     },
     async close() { await pool.end(); },
-  };
-}
-
-export function combineStores(stores) {
-  const active = stores.filter(Boolean);
-  return {
-    path: active.map((store) => store.path).join(" + "),
-    async write(event) {
-      return Promise.all(active.map((store) => store.write(event)));
-    },
-    async close() {
-      await Promise.allSettled(active.map((store) => store.close()));
-    },
   };
 }
 
