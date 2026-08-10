@@ -51,6 +51,7 @@ services:
       dockerfile: Dockerfile.collector
     init: true
     shm_size: 1gb
+    cpus: ${COLLECTOR_CPUS:-2.0}
     restart: unless-stopped
     environment:
       PGHOST: postgres
@@ -76,6 +77,7 @@ services:
       dockerfile: Dockerfile.collector
     init: true
     shm_size: 1gb
+    cpus: ${COLLECTOR_CPUS:-2.0}
     restart: "no"
     command: ["/bin/sh", "/app/scripts/collector-vnc.sh"]
     environment:

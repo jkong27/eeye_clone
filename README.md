@@ -137,6 +137,10 @@ run independently:
 docker compose --profile collector up -d collector
 ```
 
+Both collector modes are limited to two CPU cores by default because Chromium
+renders StarBreak's WebGL graphics through software inside Docker. Set
+`COLLECTOR_CPUS` in `.env` to override the limit.
+
 Its anonymous browser profile and health state persist in
 `eeye_collector_data`. The collector image is health-checked using live
 game-shard traffic; the UI health check also verifies its database connection.
