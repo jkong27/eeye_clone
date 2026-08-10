@@ -150,6 +150,25 @@ export function decodeFrame(frame, meta = {}) {
   return out;
 }
 
+/** Diagnostic: find player-chat-shaped protobufs regardless of outer type. */
+export function discoverPlayerChat(frame) {
+  const buf = Buffer.from(frame);
+  const candidates = [];
+  for (let i = 0; i + 7 <= buf.length; i++) {
+    if (buf[i + 1] !== 0 || buf[i + 2] !== 0 || buf[i + 3] !== 0) continue;
+    const type = buf[i];
+    const len = buf[i + 4];
+    if (len < 8 || i + 5 + len > buf.length) continue;
+    const fields = parseProto(buf.subarray(i + 5, i + 5 + len));
+    const name = firstText(fields, 1);
+    const playerId = firstText(fields, 2);
+    const message = firstText(fields, 4);
+    if (!name || !/^\d{12,20}$/.test(playerId || "") || !message) continue;
+    candidates.push({ offset: i, type, payloadLen: len, name, playerId, message });
+  }
+  return candidates;
+}
+
 /**
  * Decode a capture JSONL line / frame object from the userscript.
  * Supports v2 (`b64`) and v1 (`hex` preview — may be truncated).

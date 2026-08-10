@@ -2,8 +2,8 @@
 /**
  * Phase 2 — always-on StarBreak lobby chat logger (web client).
  *
- * First run is interactive: log in + enter Eschaton, then press Enter in this
- * terminal. Cookies are saved so later runs can reuse the session.
+ * A persistent anonymous browser profile is reused between runs. Automatic
+ * entry clicks Play and skips the tutorial when it is detected.
  *
  * Usage:
  *   node src/logger.js
@@ -15,7 +15,7 @@ import path from "path";
 import readline from "readline";
 import { chromium } from "playwright";
 import { fileURLToPath } from "url";
-import { decodeFrame } from "./decode.js";
+import { decodeFrame, discoverPlayerChat } from "./decode.js";
 import {
   createPostgresStore,
   normalizeChatMessage,
@@ -25,6 +25,7 @@ import { WS_HOOK_SOURCE } from "./ws-hook.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
+const TUTORIAL_MARKER = Buffer.from("tutorial", "ascii");
 
 function parseArgs(argv) {
   const args = {
@@ -108,6 +109,10 @@ Postgres schema (optional) is printed with --schema.`);
   let reconnecting = false;
   let monitoringArmed = false;
   let activeGameSocket = null;
+  let diagnosticFrames = 0;
+  let tutorialDetectionDeadline = 0;
+  let tutorialSkipScheduled = false;
+  let tutorialGeneration = 0;
 
   const isGameSocket = (url) => {
     try {
@@ -143,6 +148,31 @@ Postgres schema (optional) is printed with --schema.`);
   await context.exposeBinding("__eeyeOnWsFrame", async (_source, frame) => {
     try {
       const buf = Buffer.from(frame.b64, "base64");
+      if (
+        !tutorialSkipScheduled &&
+        Date.now() < tutorialDetectionDeadline &&
+        frame.direction === "in" &&
+        isGameSocket(frame.url) &&
+        buf.includes(TUTORIAL_MARKER)
+      ) {
+        tutorialSkipScheduled = true;
+        const generation = tutorialGeneration;
+        console.log("[eeye] tutorial detected; pressing H to skip in 6s");
+        setTimeout(async () => {
+          if (generation !== tutorialGeneration) return;
+          try {
+            const activePage = context.pages()[0];
+            if (!activePage || activePage.isClosed()) return;
+            await activePage.bringToFront();
+            await activePage.keyboard.down("h");
+            await activePage.waitForTimeout(150);
+            await activePage.keyboard.up("h");
+            console.log("[eeye] tutorial skip sent");
+          } catch (error) {
+            console.error("[eeye] tutorial skip failed:", error.message);
+          }
+        }, 6000);
+      }
       const events = decodeFrame(buf, {
         t: frame.t,
         direction: frame.direction,
@@ -167,6 +197,34 @@ Postgres schema (optional) is printed with --schema.`);
     }
   });
 
+  await context.exposeBinding("__eeyeOnWsDiagnostic", (_source, frame) => {
+    if (process.env.DEBUG_CHAT !== "1" || diagnosticFrames >= 100) return;
+    const bytes = Buffer.from(frame.b64, "base64");
+    const candidates = discoverPlayerChat(bytes);
+    for (const candidate of candidates) {
+      diagnosticFrames++;
+      console.log("[chat-diagnostic]", JSON.stringify(candidate));
+    }
+    if (!candidates.length) {
+      const strings = bytes
+        .toString("latin1")
+        .split(/[^\x20-\x7e]+/)
+        .filter((value) => value.length >= 4 && value.includes(" "))
+        .slice(0, 8);
+      if (strings.length) {
+        diagnosticFrames++;
+        console.log(
+          "[chat-diagnostic]",
+          JSON.stringify({
+            frameLen: bytes.length,
+            firstTag: bytes.subarray(0, 4).toString("hex"),
+            strings,
+          }),
+        );
+      }
+    }
+  });
+
   await context.exposeBinding("__eeyeOnWsActivity", (_source, activity) => {
     if (activity.url === activeGameSocket) {
       lastWsActivity = Date.now();
@@ -174,6 +232,9 @@ Postgres schema (optional) is printed with --schema.`);
     }
   });
 
+  await context.addInitScript({
+    content: `window.__eeyeDebugChat = ${process.env.DEBUG_CHAT === "1"};`,
+  });
   await context.addInitScript({ content: WS_HOOK_SOURCE });
 
   const page = context.pages()[0] || (await context.newPage());
@@ -189,6 +250,9 @@ Postgres schema (optional) is printed with --schema.`);
 
   const enterGame = async () => {
     activeGameSocket = null;
+    tutorialGeneration++;
+    tutorialSkipScheduled = false;
+    tutorialDetectionDeadline = Date.now() + 90_000;
     for (let attempt = 1; attempt <= 3; attempt++) {
       const canvas = page.locator("canvas").first();
       await canvas.waitFor({ state: "visible", timeout: 30000 });
@@ -210,7 +274,7 @@ Postgres schema (optional) is printed with --schema.`);
       console.warn("[eeye] matchmaking did not yield a game shard; retrying");
     }
     throw new Error(
-      "Could not enter the game automatically. Run with --manual to inspect login or server state.",
+      "Could not enter the game automatically. Run with --manual to inspect the game state.",
     );
   };
 
@@ -248,6 +312,7 @@ Postgres schema (optional) is printed with --schema.`);
     );
     if (status.type === "open" && gameSocket) {
       activeGameSocket = status.url;
+      tutorialDetectionDeadline = Date.now() + 30_000;
       lastWsActivity = Date.now();
       writeHealth("connected");
     }
@@ -267,9 +332,8 @@ Postgres schema (optional) is printed with --schema.`);
   if (args.manual) {
     console.log(`
 [eeye] Manual setup enabled.
-  1. Log in if needed
-  2. Enter Eschaton (lobby) on your target server
-  3. Come back here and press Enter to mark "online"
+  1. Enter Eschaton (lobby) in the browser
+  2. Come back here and press Enter to mark "online"
 `);
     await ask("Press Enter when the bot is parked in Eschaton… ");
   } else {

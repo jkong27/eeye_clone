@@ -72,12 +72,14 @@ The collector:
 1. Reuses `data/browser-profile/`.
 2. Opens StarBreak and waits briefly for the canvas menu to stabilize.
 3. Clicks Play and retries until a game-shard WebSocket opens.
-4. Writes each decoded event to PostgreSQL.
-5. Sends brief opposing movement inputs every 12 minutes.
-6. Reconnects with capped backoff after a socket or network failure.
+4. Detects the tutorial during initial shard loading and presses `H` to skip it.
+5. Writes each decoded event to PostgreSQL.
+6. Sends brief opposing movement inputs every 12 minutes.
+7. Reconnects with capped backoff after a socket or network failure.
 
-The saved browser profile must already be signed in. Use `--manual` when login,
-character selection, or server selection needs attention.
+StarBreak creates an anonymous session; no account creation or login bootstrap
+is required. The persistent profile retains that anonymous identity across
+restarts. Use `--manual` only when game state needs interactive attention.
 
 ```bash
 npm run logger -- --manual
@@ -128,35 +130,35 @@ the existing host PostgreSQL database. Until the migration/cutover step is
 completed, this container database contains only newly imported or
 container-collected data.
 
-The collector is intentionally behind the `collector` profile because a fresh
-Linux Chromium profile must be logged in first:
+The collector is behind the `collector` profile so the database and UI can be
+run independently:
 
 ```bash
 docker compose --profile collector up -d collector
 ```
 
-Do not start that profile before completing the container login bootstrap. Its
-browser profile and health state persist in `eeye_collector_data`. The collector
-image is health-checked using live game-shard traffic; the UI health check also
-verifies its database connection.
+Its anonymous browser profile and health state persist in
+`eeye_collector_data`. The collector image is health-checked using live
+game-shard traffic; the UI health check also verifies its database connection.
 
-Bootstrap the Linux browser profile through a temporary noVNC session bound to
-localhost:
+For visual debugging, stop the headless collector and start the VNC-enabled
+collector:
 
 ```bash
-docker compose --profile bootstrap up -d bootstrap
+docker compose --profile collector stop collector
+docker compose --profile debug up -d collector-vnc
 ```
 
-Open `http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale`, sign in to
-StarBreak, and verify the account name appears on the home screen. Then stop
-the bootstrap service cleanly so Chromium flushes the profile:
+Open `http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale`. When
+finished, switch back to the headless collector:
 
 ```bash
-docker compose --profile bootstrap stop bootstrap
+docker compose --profile debug stop collector-vnc
+docker compose --profile collector up -d collector
 ```
 
 The noVNC port is unauthenticated but is published only on `127.0.0.1`. Do not
-change that binding to a public interface. Never run `bootstrap` and
+change that binding to a public interface. Never run `collector-vnc` and
 `collector` at the same time because Chromium profiles support only one writer.
 
 Useful Compose commands:
@@ -203,6 +205,6 @@ The original decoded message remains available in PostgreSQL's `raw` JSON.
 - Collector image: built and Chromium smoke-tested.
 - UI image: built and smoke-tested.
 - Compose PostgreSQL, UI, and collector: running and health-checked.
-- Container login bootstrap: working through localhost-only noVNC.
-- Linux headless collector: signed in, entering Eschaton, and storing messages.
+- Optional visual collector debugging: working through localhost-only noVNC.
+- Linux headless collector: entering Eschaton anonymously and storing messages.
 - Cloud deployment: not completed yet.

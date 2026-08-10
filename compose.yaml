@@ -58,6 +58,7 @@ services:
       PGDATABASE: ${PGDATABASE:-eeye}
       PGUSER: ${PGUSER:-eeye_app}
       PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+      DEBUG_CHAT: ${DEBUG_CHAT:-0}
     volumes:
       - collector_data:/app/data
     depends_on:
@@ -67,8 +68,8 @@ services:
       - backend
       - edge
 
-  bootstrap:
-    profiles: ["bootstrap"]
+  collector-vnc:
+    profiles: ["debug"]
     image: eeye-collector:local
     build:
       context: .
@@ -76,14 +77,23 @@ services:
     init: true
     shm_size: 1gb
     restart: "no"
-    healthcheck:
-      disable: true
-    command: ["/bin/sh", "/app/scripts/bootstrap.sh"]
+    command: ["/bin/sh", "/app/scripts/collector-vnc.sh"]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-eeye}
+      PGUSER: ${PGUSER:-eeye_app}
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+      DEBUG_CHAT: ${DEBUG_CHAT:-1}
     ports:
-      - "127.0.0.1:${BOOTSTRAP_PORT:-6080}:6080"
+      - "127.0.0.1:${VNC_PORT:-6080}:6080"
     volumes:
       - collector_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
+      - backend
       - edge
 
 volumes:

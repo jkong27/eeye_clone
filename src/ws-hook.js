@@ -5,6 +5,7 @@
 export const WS_HOOK_SOURCE = `(() => {
   if (window.__eeyeWsHooked) return;
   window.__eeyeWsHooked = true;
+  const tutorialScanDeadline = Date.now() + 120000;
 
   function toBytes(data) {
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -39,6 +40,34 @@ export const WS_HOOK_SOURCE = `(() => {
     return false;
   }
 
+  function maybeHasReadablePhrase(bytes) {
+    let run = 0;
+    let hasSpace = false;
+    for (let i = 0; i < bytes.length; i++) {
+      if (bytes[i] >= 0x20 && bytes[i] < 0x7f) {
+        run++;
+        if (bytes[i] === 0x20) hasSpace = true;
+        if (run >= 6 && hasSpace) return true;
+      } else {
+        run = 0;
+        hasSpace = false;
+      }
+    }
+    return false;
+  }
+
+  function maybeHasTutorial(bytes) {
+    if (Date.now() >= tutorialScanDeadline) return false;
+    const marker = [0x74, 0x75, 0x74, 0x6f, 0x72, 0x69, 0x61, 0x6c];
+    outer: for (let i = 0; i <= bytes.length - marker.length; i++) {
+      for (let j = 0; j < marker.length; j++) {
+        if (bytes[i + j] !== marker[j]) continue outer;
+      }
+      return true;
+    }
+    return false;
+  }
+
   async function emit(urlStr, data) {
     const handler = window.__eeyeOnWsFrame;
     if (!handler) return;
@@ -46,7 +75,17 @@ export const WS_HOOK_SOURCE = `(() => {
     if (!bytes && typeof Blob !== "undefined" && data instanceof Blob) {
       bytes = new Uint8Array(await data.arrayBuffer());
     }
-    if (!bytes || !maybeHasChat(bytes)) return;
+    if (
+      bytes &&
+      window.__eeyeDebugChat === true &&
+      maybeHasReadablePhrase(bytes) &&
+      window.__eeyeOnWsDiagnostic
+    ) {
+      window.__eeyeOnWsDiagnostic({
+        t: new Date().toISOString(), url: urlStr, b64: bytesToBase64(bytes),
+      });
+    }
+    if (!bytes || (!maybeHasChat(bytes) && !maybeHasTutorial(bytes))) return;
     handler({
       t: new Date().toISOString(),
       direction: "in",

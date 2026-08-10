@@ -17,7 +17,9 @@ COPY src ./src
 COPY scripts ./scripts
 COPY schema.sql ./schema.sql
 
-RUN mkdir -p /app/data && chown -R pwuser:pwuser /app
+RUN mkdir -p /app/data /tmp/.X11-unix \
+    && chmod 1777 /tmp/.X11-unix \
+    && chown -R pwuser:pwuser /app
 USER pwuser
 
 VOLUME ["/app/data"]
