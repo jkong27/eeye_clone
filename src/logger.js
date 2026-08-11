@@ -2,13 +2,12 @@
 /**
  * Phase 2 — always-on StarBreak lobby chat logger (web client).
  *
- * A persistent anonymous browser profile is reused between runs. Automatic
- * entry clicks Play and skips the tutorial when it is detected.
+ * Each run creates a fresh anonymous browser context. Automatic entry clicks
+ * Play and skips the tutorial when it is detected.
  *
  * Usage:
  *   node src/logger.js
  *   node src/logger.js --headed
- *   node src/logger.js --profile ./data/profile
  */
 import fs from "fs";
 import path from "path";
@@ -30,7 +29,6 @@ const TUTORIAL_MARKER = Buffer.from("tutorial", "ascii");
 function parseArgs(argv) {
   const args = {
     headed: true,
-    profile: path.join(ROOT, "data", "browser-profile"),
     url: "https://www.starbreak.com/",
     databaseUrl: process.env.DATABASE_URL || null,
     keepaliveMinutes: 12,
@@ -42,7 +40,6 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--headed") args.headed = true;
     else if (a === "--headless") args.headed = false;
-    else if (a === "--profile") args.profile = path.resolve(argv[++i]);
     else if (a === "--url") args.url = argv[++i];
     else if (a === "--database-url") args.databaseUrl = argv[++i];
     else if (a === "--keepalive-minutes") args.keepaliveMinutes = Number(argv[++i]);
@@ -81,7 +78,7 @@ async function main() {
   if (args.help) {
     console.log(`StarBreak chat logger
 
-  node src/logger.js [--headed|--headless] [--profile DIR]
+  node src/logger.js [--headed|--headless]
                      [--database-url URL] [--keepalive-minutes N]
                      [--stale-seconds N] [--play-delay-seconds N] [--manual]
 
@@ -96,7 +93,6 @@ Postgres schema (optional) is printed with --schema.`);
     process.exit(0);
   }
 
-  fs.mkdirSync(args.profile, { recursive: true });
   const postgresEnabled = args.databaseUrl || process.env.PGDATABASE;
   if (!postgresEnabled) {
     throw new Error("PostgreSQL configuration is required (DATABASE_URL or PGDATABASE).");
@@ -104,6 +100,7 @@ Postgres schema (optional) is printed with --schema.`);
   const store = await createPostgresStore(args.databaseUrl);
   const seen = new Set();
   const healthPath = path.join(ROOT, "data", "collector-health.json");
+  fs.mkdirSync(path.dirname(healthPath), { recursive: true });
   let decoded = 0;
   let lastWsActivity = Date.now();
   let reconnecting = false;
@@ -135,14 +132,16 @@ Postgres schema (optional) is printed with --schema.`);
     });
   };
 
-  console.log("[eeye] profile:", args.profile);
+  console.log("[eeye] browser state: ephemeral");
   console.log("[eeye] writing: postgres");
   console.log("[eeye] launching Chromium…");
 
-  const context = await chromium.launchPersistentContext(args.profile, {
+  const browser = await chromium.launch({
     headless: !args.headed,
-    viewport: { width: 1280, height: 800 },
     args: ["--disable-blink-features=AutomationControlled"],
+  });
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
   });
 
   await context.exposeBinding("__eeyeOnWsFrame", async (_source, frame) => {
@@ -353,6 +352,7 @@ Postgres schema (optional) is printed with --schema.`);
     console.log(`\n[eeye] stopping — ${decoded} messages written`);
     await store.close();
     await context.close();
+    await browser.close();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

@@ -20,7 +20,7 @@ StarBreak web client -> Playwright collector -> PostgreSQL <- Query UI/API
 | `src/server.js` | Read-only UI/API server |
 | `public/` | Player search frontend |
 | `schema.sql` | PostgreSQL schema |
-| `data/` | Browser profile and health state (ignored by Git) |
+| `data/` | Runtime collector health state (ignored by Git) |
 | `Dockerfile.collector` | Playwright collector image |
 | `Dockerfile.ui` | Lightweight UI/API image |
 | `compose.yaml` | PostgreSQL, UI, and gated collector services |
@@ -41,6 +41,9 @@ npm install
 npx playwright install chromium
 ```
 
+If Windows PowerShell blocks the `npm.ps1` shim because of its execution
+policy, use `npm.cmd` and `npx.cmd` for the same commands.
+
 Create `.env` from `.env.example` and provide a real password. The local setup
 supports PostgreSQL's standard split variables:
 
@@ -50,6 +53,9 @@ PGPORT=5432
 PGDATABASE=eeye
 PGUSER=eeye_app
 PGPASSWORD=replace-with-a-long-random-password
+UI_PORT=3000
+VNC_PORT=6080
+COLLECTOR_CPUS=2.0
 ```
 
 `DATABASE_URL` is also supported and takes precedence when present. It is
@@ -69,17 +75,18 @@ npm run logger
 
 The collector:
 
-1. Reuses `data/browser-profile/`.
+1. Creates a fresh anonymous browser context.
 2. Opens StarBreak and waits briefly for the canvas menu to stabilize.
 3. Clicks Play and retries until a game-shard WebSocket opens.
 4. Detects the tutorial during initial shard loading and presses `H` to skip it.
 5. Writes each decoded event to PostgreSQL.
-6. Sends brief opposing movement inputs every 12 minutes.
+6. Attempts a brief opposing-movement keepalive every 12 minutes.
 7. Reconnects with capped backoff after a socket or network failure.
 
-StarBreak creates an anonymous session; no account creation or login bootstrap
-is required. The persistent profile retains that anonymous identity across
-restarts. Use `--manual` only when game state needs interactive attention.
+StarBreak creates an anonymous session; no account creation, login bootstrap,
+or persistent browser profile is required. Each collector process starts with
+a new anonymous identity. Use `--manual` only when game state needs interactive
+attention.
 
 ```bash
 npm run logger -- --manual
@@ -125,10 +132,11 @@ docker compose logs -f ui
 Open `http://127.0.0.1:3000` (or the port set by `UI_PORT`). PostgreSQL is kept
 on an internal Docker network and is not published to the host.
 
-Compose uses its own persistent `eeye_postgres_data` volume. It does not read
-the existing host PostgreSQL database. Until the migration/cutover step is
-completed, this container database contains only newly imported or
-container-collected data.
+Compose stores container-collected messages in the persistent
+`eeye_postgres_data` volume. It does not read the existing host PostgreSQL
+database. Recreating containers or images preserves the database; running
+`docker compose down --volumes` permanently deletes it. The collectors are
+stateless and do not use a data volume.
 
 The collector is behind the `collector` profile so the database and UI can be
 run independently:
@@ -141,9 +149,8 @@ Both collector modes are limited to two CPU cores by default because Chromium
 renders StarBreak's WebGL graphics through software inside Docker. Set
 `COLLECTOR_CPUS` in `.env` to override the limit.
 
-Its anonymous browser profile and health state persist in
-`eeye_collector_data`. The collector image is health-checked using live
-game-shard traffic; the UI health check also verifies its database connection.
+The collector image is health-checked using recent live game-shard traffic;
+the UI health check also verifies its database connection.
 
 For visual debugging, stop the headless collector and start the VNC-enabled
 collector:
@@ -154,7 +161,9 @@ docker compose --profile debug up -d collector-vnc
 ```
 
 Open `http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale`. When
-finished, switch back to the headless collector:
+finished, switch back to the headless collector. The VNC collector enables
+bounded protocol diagnostics by default, so its logs are intentionally more
+verbose:
 
 ```bash
 docker compose --profile debug stop collector-vnc
@@ -162,17 +171,31 @@ docker compose --profile collector up -d collector
 ```
 
 The noVNC port is unauthenticated but is published only on `127.0.0.1`. Do not
-change that binding to a public interface. Never run `collector-vnc` and
-`collector` at the same time because Chromium profiles support only one writer.
+change that binding to a public interface. Avoid running `collector-vnc` and
+`collector` together because that creates two independent collectors and may
+store duplicate messages.
 
 Useful Compose commands:
 
 ```bash
+# Start PostgreSQL and the UI only (services without a profile).
+docker compose up -d
+
+# Start PostgreSQL, the UI, and the headless collector.
+docker compose --profile collector up -d
+
+# Rebuild images before starting all three services.
+docker compose --profile collector up -d --build
+
 docker compose ps
 docker compose logs -f postgres ui
 docker compose stop
-docker compose up -d
 ```
+
+Compose profiles are declared in `compose.yaml`. The headless `collector`
+service uses the `collector` profile, and the headed `collector-vnc` service
+uses the `debug` profile. PostgreSQL and the UI have no profile, so Compose
+starts them by default.
 
 ## Offline capture decode
 
@@ -204,11 +227,14 @@ The original decoded message remains available in PostgreSQL's `raw` JSON.
 
 ## Current deployment status
 
-- Local collector: working with automatic entry, keepalive, and reconnection.
+- Local collector: working with anonymous automatic entry, tutorial skipping,
+  PostgreSQL writes, and reconnection.
 - Local PostgreSQL and UI: working.
 - Collector image: built and Chromium smoke-tested.
 - UI image: built and smoke-tested.
 - Compose PostgreSQL, UI, and collector: running and health-checked.
 - Optional visual collector debugging: working through localhost-only noVNC.
 - Linux headless collector: entering Eschaton anonymously and storing messages.
+- Recurring abnormal WebSocket `1006` disconnects under the two-core collector
+  limit are still under investigation; first-attempt reconnection is working.
 - Cloud deployment: not completed yet.

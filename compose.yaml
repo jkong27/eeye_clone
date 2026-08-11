@@ -60,8 +60,6 @@ services:
       PGUSER: ${PGUSER:-eeye_app}
       PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
       DEBUG_CHAT: ${DEBUG_CHAT:-0}
-    volumes:
-      - collector_data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,8 +87,6 @@ services:
       DEBUG_CHAT: ${DEBUG_CHAT:-1}
     ports:
       - "127.0.0.1:${VNC_PORT:-6080}:6080"
-    volumes:
-      - collector_data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -100,7 +96,6 @@ services:
 
 volumes:
   postgres_data:
-  collector_data:
 
 networks:
   backend:

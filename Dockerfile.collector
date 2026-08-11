@@ -22,7 +22,6 @@ RUN mkdir -p /app/data /tmp/.X11-unix \
     && chown -R pwuser:pwuser /app
 USER pwuser
 
-VOLUME ["/app/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=2m --retries=3 \
   CMD ["node", "src/healthcheck.js"]
 
