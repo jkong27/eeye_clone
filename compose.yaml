@@ -50,8 +50,7 @@ services:
       context: .
       dockerfile: Dockerfile.collector
     init: true
-    shm_size: 1gb
-    cpus: ${COLLECTOR_CPUS:-2.0}
+    cpus: ${COLLECTOR_CPUS:-1.0}
     restart: unless-stopped
     environment:
       PGHOST: postgres
@@ -59,34 +58,8 @@ services:
       PGDATABASE: ${PGDATABASE:-eeye}
       PGUSER: ${PGUSER:-eeye_app}
       PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
-      DEBUG_CHAT: ${DEBUG_CHAT:-0}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - backend
-      - edge
-
-  collector-vnc:
-    profiles: ["debug"]
-    image: eeye-collector:local
-    build:
-      context: .
-      dockerfile: Dockerfile.collector
-    init: true
-    shm_size: 1gb
-    cpus: ${COLLECTOR_CPUS:-2.0}
-    restart: "no"
-    command: ["/bin/sh", "/app/scripts/collector-vnc.sh"]
-    environment:
-      PGHOST: postgres
-      PGPORT: 5432
-      PGDATABASE: ${PGDATABASE:-eeye}
-      PGUSER: ${PGUSER:-eeye_app}
-      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
-      DEBUG_CHAT: ${DEBUG_CHAT:-1}
-    ports:
-      - "127.0.0.1:${VNC_PORT:-6080}:6080"
+      KEEPALIVE_MINUTES: ${KEEPALIVE_MINUTES:-12}
+      STALE_SECONDS: ${STALE_SECONDS:-90}
     depends_on:
       postgres:
         condition: service_healthy

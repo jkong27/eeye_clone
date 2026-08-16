@@ -7,13 +7,14 @@ and ID. Game announcements use the special player ID `SYSTEM`.
 ## Architecture
 
 ```text
-StarBreak web client -> Playwright collector -> PostgreSQL <- Query UI/API
+StarBreak WebSocket -> direct Node collector -> PostgreSQL <- Query UI/API
 ```
 
 | Path | Purpose |
 | --- | --- |
-| `src/logger.js` | Playwright collector, reconnect loop, and activity keepalive |
-| `src/ws-hook.js` | Browser-side WebSocket observer |
+| `src/direct-logger.js` | Production collector, PostgreSQL writes, and reconnect loop |
+| `src/direct-client.js` | Anonymous handshake, tutorial bypass, protocol ACKs, and keepalive |
+| `src/starbreak-protocol.js` | WebSocket framing, protobuf encoding, and RSA handshake |
 | `src/decode.js` | Type `0x14` chat protobuf decoder |
 | `src/decode-file.js` | Offline capture decoder |
 | `src/store.js` | PostgreSQL storage and message normalization |
@@ -21,9 +22,9 @@ StarBreak web client -> Playwright collector -> PostgreSQL <- Query UI/API
 | `public/` | Player search frontend |
 | `schema.sql` | PostgreSQL schema |
 | `data/` | Runtime collector health state (ignored by Git) |
-| `Dockerfile.collector` | Playwright collector image |
+| `Dockerfile.collector` | Lightweight direct collector image |
 | `Dockerfile.ui` | Lightweight UI/API image |
-| `compose.yaml` | PostgreSQL, UI, and gated collector services |
+| `compose.yaml` | PostgreSQL, UI, and profile-gated collector services |
 | `phase1-ws-capture/` | Protocol research artifacts |
 
 ## Local setup
@@ -32,17 +33,15 @@ Requirements:
 
 - Node.js 24 or another version supporting `--env-file-if-exists`
 - PostgreSQL
-- Chromium installed through Playwright
 
-Install dependencies and the browser:
+Install dependencies:
 
 ```bash
 npm install
-npx playwright install chromium
 ```
 
 If Windows PowerShell blocks the `npm.ps1` shim because of its execution
-policy, use `npm.cmd` and `npx.cmd` for the same commands.
+policy, use `npm.cmd` for the same commands.
 
 Create `.env` from `.env.example` and provide a real password. The local setup
 supports PostgreSQL's standard split variables:
@@ -53,10 +52,12 @@ PGPORT=5432
 PGDATABASE=eeye
 PGUSER=eeye_app
 PGPASSWORD=replace-with-a-long-random-password
-UI_PORT=3000
-VNC_PORT=6080
-COLLECTOR_CPUS=2.0
+KEEPALIVE_MINUTES=12
+STALE_SECONDS=90
 ```
+
+The same `.env` file supplies Compose-only settings such as `UI_PORT` and
+`COLLECTOR_CPUS`; their defaults are shown in `.env.example`.
 
 `DATABASE_URL` is also supported and takes precedence when present. It is
 useful for managed/cloud PostgreSQL:
@@ -75,29 +76,24 @@ npm run logger
 
 The collector:
 
-1. Creates a fresh anonymous browser context.
-2. Opens StarBreak and waits briefly for the canvas menu to stabilize.
-3. Clicks Play and retries until a game-shard WebSocket opens.
-4. Detects the tutorial during initial shard loading and presses `H` to skip it.
+1. Opens the StarBreak matchmaking WebSocket and performs the anonymous RSA
+   handshake directly from Node.
+2. Connects to the assigned game shard and enters the world without Chromium.
+3. Detects and bypasses the tutorial before entering Eschaton.
+4. Maintains the protocol clock and acknowledges inbound world deltas.
 5. Writes each decoded event to PostgreSQL.
-6. Attempts a brief opposing-movement keepalive every 12 minutes.
+6. Sends brief opposing-movement packets every 12 minutes to reset the
+   15-minute inactivity timer.
 7. Reconnects with capped backoff after a socket or network failure.
 
 StarBreak creates an anonymous session; no account creation, login bootstrap,
 or persistent browser profile is required. Each collector process starts with
-a new anonymous identity. Use `--manual` only when game state needs interactive
-attention.
-
-```bash
-npm run logger -- --manual
-npm run logger -- --headless
-npm run logger -- --keepalive-minutes 12 --stale-seconds 90
-npm run logger -- --play-delay-seconds 3
-npm run logger -- --schema
-```
+a new in-memory anonymous identity and reuses it for reconnect attempts during
+that process.
 
 Both `DATABASE_URL` and the split `PG*` variables enable PostgreSQL. The logger
 requires PostgreSQL configuration and applies the schema at startup.
+`KEEPALIVE_MINUTES` and `STALE_SECONDS` can be set in `.env`.
 
 Stop the collector with Ctrl+C.
 
@@ -119,7 +115,7 @@ you intentionally want it reachable through the machine's network interfaces.
 Requirements:
 
 - Docker Desktop or another Linux Docker engine
-- A `.env` containing `PGDATABASE`, `PGUSER`, and `PGPASSWORD`
+- A `.env` containing `PGPASSWORD`; `PGDATABASE` and `PGUSER` have defaults
 
 Start the containerized PostgreSQL 17 database and UI:
 
@@ -135,8 +131,8 @@ on an internal Docker network and is not published to the host.
 Compose stores container-collected messages in the persistent
 `eeye_postgres_data` volume. It does not read the existing host PostgreSQL
 database. Recreating containers or images preserves the database; running
-`docker compose down --volumes` permanently deletes it. The collectors are
-stateless and do not use a data volume.
+`docker compose down --volumes` permanently deletes it. The collector is
+stateless and does not use a data volume.
 
 The collector is behind the `collector` profile so the database and UI can be
 run independently:
@@ -145,35 +141,12 @@ run independently:
 docker compose --profile collector up -d collector
 ```
 
-Both collector modes are limited to two CPU cores by default because Chromium
-renders StarBreak's WebGL graphics through software inside Docker. Set
-`COLLECTOR_CPUS` in `.env` to override the limit.
+The direct collector is limited to one CPU core by default and normally uses
+only a small fraction of it. Set `COLLECTOR_CPUS` in `.env` to override the
+limit.
 
 The collector image is health-checked using recent live game-shard traffic;
 the UI health check also verifies its database connection.
-
-For visual debugging, stop the headless collector and start the VNC-enabled
-collector:
-
-```bash
-docker compose --profile collector stop collector
-docker compose --profile debug up -d collector-vnc
-```
-
-Open `http://127.0.0.1:6080/vnc.html?autoconnect=true&resize=scale`. When
-finished, switch back to the headless collector. The VNC collector enables
-bounded protocol diagnostics by default, so its logs are intentionally more
-verbose:
-
-```bash
-docker compose --profile debug stop collector-vnc
-docker compose --profile collector up -d collector
-```
-
-The noVNC port is unauthenticated but is published only on `127.0.0.1`. Do not
-change that binding to a public interface. Avoid running `collector-vnc` and
-`collector` together because that creates two independent collectors and may
-store duplicate messages.
 
 Useful Compose commands:
 
@@ -181,21 +154,20 @@ Useful Compose commands:
 # Start PostgreSQL and the UI only (services without a profile).
 docker compose up -d
 
-# Start PostgreSQL, the UI, and the headless collector.
+# Start PostgreSQL, the UI, and the direct collector.
 docker compose --profile collector up -d
 
 # Rebuild images before starting all three services.
 docker compose --profile collector up -d --build
 
 docker compose ps
-docker compose logs -f postgres ui
-docker compose stop
+docker compose logs -f postgres ui collector
+docker compose --profile collector stop
 ```
 
-Compose profiles are declared in `compose.yaml`. The headless `collector`
-service uses the `collector` profile, and the headed `collector-vnc` service
-uses the `debug` profile. PostgreSQL and the UI have no profile, so Compose
-starts them by default.
+The direct `collector` service uses the `collector` profile. PostgreSQL and
+the UI have no profile, so Compose starts them by default. The collector does
+not maintain a persistent StarBreak profile.
 
 ## Offline capture decode
 
@@ -206,7 +178,8 @@ node src/decode-file.js ./phase1-ws-capture/captures/starbreak-ws-1784880099832.
 ```
 
 The known fixture should decode a SYSTEM portal announcement and the player
-message `eeye-test-001`.
+message `eeye-test-001`. Capture JSONL files are protocol-research artifacts;
+the production collector writes chat only to PostgreSQL.
 
 ## Stored message shape
 
@@ -227,14 +200,12 @@ The original decoded message remains available in PostgreSQL's `raw` JSON.
 
 ## Current deployment status
 
-- Local collector: working with anonymous automatic entry, tutorial skipping,
-  PostgreSQL writes, and reconnection.
-- Local PostgreSQL and UI: working.
-- Collector image: built and Chromium smoke-tested.
+- Local collector: validated with anonymous entry, tutorial bypass, protocol
+  maintenance, PostgreSQL writes, and reconnection.
+- Local PostgreSQL and UI: validated.
+- Collector image: Node-only and does not contain Chromium.
 - UI image: built and smoke-tested.
-- Compose PostgreSQL, UI, and collector: running and health-checked.
-- Optional visual collector debugging: working through localhost-only noVNC.
-- Linux headless collector: entering Eschaton anonymously and storing messages.
-- Recurring abnormal WebSocket `1006` disconnects under the two-core collector
-  limit are still under investigation; first-attempt reconnection is working.
+- Compose PostgreSQL, UI, and collector: health-checked locally.
+- Direct collector protocol: entered Eschaton and decoded both SYSTEM and real
+  player chat.
 - Cloud deployment: not completed yet.

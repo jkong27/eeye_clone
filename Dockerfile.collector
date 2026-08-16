@@ -1,28 +1,18 @@
-FROM mcr.microsoft.com/playwright:v1.61.1-noble
+FROM node:24-bookworm-slim
 
 ENV NODE_ENV=production
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      fluxbox \
-      novnc \
-      websockify \
-      x11vnc \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY src ./src
-COPY scripts ./scripts
 COPY schema.sql ./schema.sql
 
-RUN mkdir -p /app/data /tmp/.X11-unix \
-    && chmod 1777 /tmp/.X11-unix \
-    && chown -R pwuser:pwuser /app
-USER pwuser
+RUN mkdir -p /app/data && chown -R node:node /app
+USER node
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=2m --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD ["node", "src/healthcheck.js"]
 
-CMD ["node", "src/logger.js", "--headless"]
+CMD ["node", "src/direct-logger.js"]
