@@ -1,3 +1,7 @@
+const tabs = [...document.querySelectorAll("[role='tab']")];
+const views = [...document.querySelectorAll("[role='tabpanel']")];
+const recentStatus = document.querySelector("#recent-status");
+const recentMessages = document.querySelector("#recent-messages");
 const searchInput = document.querySelector("#search");
 const searchButton = document.querySelector("#search-button");
 const status = document.querySelector("#status");
@@ -11,12 +15,28 @@ const loadMore = document.querySelector("#load-more");
 
 let selectedPlayer = null;
 let nextCursor = null;
+let recentLoaded = false;
 
 async function getJson(url) {
   const response = await fetch(url);
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Request failed");
   return body;
+}
+
+function setActiveTab(tab, { focus = false } = {}) {
+  for (const candidate of tabs) {
+    const active = candidate === tab;
+    candidate.setAttribute("aria-selected", String(active));
+    candidate.tabIndex = active ? 0 : -1;
+  }
+
+  for (const view of views) {
+    view.hidden = view.id !== tab.getAttribute("aria-controls");
+  }
+
+  if (focus) tab.focus();
+  if (tab.dataset.view === "lookup" && !focus) searchInput.focus();
 }
 
 function resultButton(player) {
@@ -54,17 +74,50 @@ async function searchPlayers() {
   }
 }
 
-function messageRow(message) {
+function messageRow(message, { showPlayer = false } = {}) {
   const row = document.createElement("article");
-  row.className = "message";
+  row.className = `message${message.kind === "system" ? " system-message" : ""}`;
+
+  const meta = document.createElement("div");
+  meta.className = "message-meta";
+  if (showPlayer) {
+    const author = document.createElement("strong");
+    author.className = "message-author";
+    author.textContent = message.kind === "system" ? "SYSTEM" : message.player;
+    meta.append(author);
+  }
+
   const time = document.createElement("time");
   const date = new Date(message.received_at);
   time.dateTime = date.toISOString();
   time.textContent = date.toLocaleString();
+  meta.append(time);
+
   const text = document.createElement("p");
   text.textContent = message.message;
-  row.append(time, text);
+  row.append(meta, text);
   return row;
+}
+
+async function loadRecentMessages() {
+  try {
+    const data = await getJson("/api/recent-messages");
+    recentMessages.replaceChildren();
+    if (!data.messages.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "No messages have been recorded yet.";
+      recentMessages.append(empty);
+    } else {
+      recentMessages.append(...data.messages.map((message) =>
+        messageRow(message, { showPlayer: true })));
+    }
+    recentStatus.hidden = true;
+    recentLoaded = true;
+  } catch (error) {
+    recentStatus.hidden = false;
+    recentStatus.textContent = error.message;
+  }
 }
 
 async function loadMessages(append = false) {
@@ -83,7 +136,7 @@ async function loadMessages(append = false) {
       empty.textContent = "No messages recorded for this player.";
       messages.append(empty);
     } else {
-      messages.append(...data.messages.map(messageRow));
+      messages.append(...data.messages.map((message) => messageRow(message)));
     }
     nextCursor = data.next_cursor;
     loadMore.hidden = !nextCursor;
@@ -104,8 +157,25 @@ async function selectPlayer(player) {
   await loadMessages(false);
 }
 
+for (const tab of tabs) {
+  tab.addEventListener("click", () => {
+    setActiveTab(tab);
+    if (tab.dataset.view === "recent" && !recentLoaded) loadRecentMessages();
+  });
+  tab.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const offset = event.key === "ArrowRight" ? 1 : -1;
+    const nextIndex = (tabs.indexOf(tab) + offset + tabs.length) % tabs.length;
+    setActiveTab(tabs[nextIndex], { focus: true });
+    if (tabs[nextIndex].dataset.view === "recent" && !recentLoaded) loadRecentMessages();
+  });
+}
+
 searchButton.addEventListener("click", searchPlayers);
 searchInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") searchPlayers();
 });
 loadMore.addEventListener("click", () => loadMessages(true));
+
+loadRecentMessages();

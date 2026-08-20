@@ -1,7 +1,7 @@
 # Eschaton Eye clone
 
 An always-on StarBreak lobby chat collector with PostgreSQL storage and a
-read-only player search UI. Player chat is stored under the real player name
+read-only chat archive UI. Player chat is stored under the real player name
 and ID. Game announcements use the special player ID `SYSTEM`.
 
 ## Architecture
@@ -103,7 +103,9 @@ Stop the collector with Ctrl+C.
 npm run ui
 ```
 
-Open `http://127.0.0.1:3000`. The UI searches non-SYSTEM players by name or
+Open `http://127.0.0.1:3000`. The Home tab always displays the 100 most recent
+messages, including SYSTEM announcements. This limit is fixed and the feed is
+not paginated. The Player Lookup tab searches non-SYSTEM players by name or
 exact player ID and displays paginated chat history. API queries are
 parameterized and do not return the raw event payload.
 

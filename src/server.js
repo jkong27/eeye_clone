@@ -11,7 +11,9 @@ const publicDir = path.join(root, "public");
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "127.0.0.1";
 const pool = new Pool(
-  process.env.DATABASE_URL ? { connectionString: process.env.DATABASE_URL } : {},
+  process.env.DATABASE_URL
+    ? { connectionString: process.env.DATABASE_URL }
+    : {},
 );
 
 const assets = new Map([
@@ -27,7 +29,9 @@ function sendJson(res, status, body) {
 
 function positiveInt(value, fallback, max) {
   const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, max)
+    : fallback;
 }
 
 async function apiPlayers(url, res) {
@@ -47,6 +51,18 @@ async function apiPlayers(url, res) {
     [query, limit],
   );
   sendJson(res, 200, { players: result.rows });
+}
+
+async function apiRecentMessages(res) {
+  const result = await pool.query(
+    `SELECT m.id, m.received_at, m.player_id, p.name AS player, m.kind,
+            m.message, m.server_url, m.flag
+       FROM chat_messages m
+       JOIN players p ON p.player_id = m.player_id
+      ORDER BY m.id DESC
+      LIMIT 100`,
+  );
+  sendJson(res, 200, { messages: result.rows });
 }
 
 async function apiMessages(url, res) {
@@ -85,13 +101,19 @@ async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; style-src 'self'; script-src 'self'",
+  );
 
-  if (req.method !== "GET") return sendJson(res, 405, { error: "Method not allowed." });
+  if (req.method !== "GET")
+    return sendJson(res, 405, { error: "Method not allowed." });
   if (url.pathname === "/api/health") {
     await pool.query("SELECT 1");
     return sendJson(res, 200, { ok: true });
   }
+  if (url.pathname === "/api/recent-messages")
+    return apiRecentMessages(res);
   if (url.pathname === "/api/players") return apiPlayers(url, res);
   if (url.pathname === "/api/messages") return apiMessages(url, res);
 
@@ -99,14 +121,18 @@ async function handle(req, res) {
   if (!asset) return sendJson(res, 404, { error: "Not found." });
   const [file, contentType] = asset;
   const body = await fs.readFile(path.join(publicDir, file));
-  res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-cache" });
+  res.writeHead(200, {
+    "Content-Type": contentType,
+    "Cache-Control": "no-cache",
+  });
   res.end(body);
 }
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((error) => {
     console.error("[ui] request failed:", error);
-    if (!res.headersSent) sendJson(res, 500, { error: "Internal server error." });
+    if (!res.headersSent)
+      sendJson(res, 500, { error: "Internal server error." });
     else res.end();
   });
 });
